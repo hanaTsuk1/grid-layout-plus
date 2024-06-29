@@ -25,7 +25,7 @@ import { getControlPosition, createCoreData } from '../helpers/draggable'
 import { getColsFromBreakpoint } from '../helpers/responsive'
 import { getDocumentDir } from '../helpers/dom'
 
-import interact from 'interactjs'
+import Moveable from 'moveable'
 
 const props = defineProps({
   isDraggable: {
@@ -79,30 +79,6 @@ const props = defineProps({
   i: {
     type: [Number, String],
     required: true
-  },
-  dragIgnoreFrom: {
-    type: String,
-    default: 'a, button'
-  },
-  dragAllowFrom: {
-    type: String,
-    default: null
-  },
-  resizeIgnoreFrom: {
-    type: String,
-    default: 'a, button'
-  },
-  preserveAspectRatio: {
-    type: Boolean,
-    default: false
-  },
-  dragOption: {
-    type: Object,
-    default: () => ({})
-  },
-  resizeOption: {
-    type: Object,
-    default: () => ({})
   }
 })
 
@@ -115,7 +91,7 @@ if (!layout) {
   throw new Error('[grid-layout-plus]: missing layout store, GridItem must under a GridLayout.')
 }
 
-const interactObj = ref<InstanceType<typeof import('@interactjs/types').Interactable> | null>(null)
+const interactObj = ref<InstanceType<typeof Moveable> | null>(null)
 
 const state = reactive({
   cols: 1,
@@ -287,8 +263,7 @@ onBeforeUnmount(() => {
   emitter.off('setColNum', setColNum)
 
   if (interactObj.value) {
-    interactObj.value.unset() // destroy interact intance
-    interactObj.value = null
+    interactObj.value.destroy()
   }
 
   layout.decreaseItem(instance)
@@ -453,10 +428,9 @@ function emitContainerResized() {
   emit('container-resized', props.i, props.h, props.w, styleProps.height, styleProps.width)
 }
 
-function handleResize(event: MouseEvent) {
+function handleResize(event: any, type: string) {
   if (props.static) return
 
-  const type = event.type
   if (
     (type === 'resizestart' && state.isResizing) ||
     (type !== 'resizestart' && !state.isResizing)
@@ -533,16 +507,15 @@ function handleResize(event: MouseEvent) {
   if (innerW !== pos.w || innerH !== pos.h) {
     emit('resize', props.i, pos.h, pos.w, newSize.height, newSize.width)
   }
-  if (event.type === 'resizeend' && (previousW !== innerW || previousH !== innerH)) {
+  if (type === 'resizeend' && (previousW !== innerW || previousH !== innerH)) {
     emit('resized', props.i, pos.h, pos.w, newSize.height, newSize.width)
   }
-  emitter.emit('resizeEvent', event.type, props.i, innerX, innerY, pos.h, pos.w)
+  emitter.emit('resizeEvent', type, props.i, innerX, innerY, pos.h, pos.w)
 }
 
-function handleDrag(event: MouseEvent) {
+function handleDrag(event: any, type: string) {
   if (props.static || state.isResizing) return
 
-  const type = event.type
   if ((type === 'dragstart' && state.isDragging) || (type !== 'dragstart' && !state.isDragging)) {
     return
   }
@@ -644,10 +617,10 @@ function handleDrag(event: MouseEvent) {
   if (innerX !== pos.x || innerY !== pos.y) {
     emit('move', props.i, pos.x, pos.y)
   }
-  if (event.type === 'dragend' && (previousX !== innerX || previousY !== innerY)) {
+  if (type === 'dragend' && (previousX !== innerX || previousY !== innerY)) {
     emit('moved', props.i, pos.x, pos.y)
   }
-  emitter.emit('dragEvent', event.type, props.i, pos.x, pos.y, innerH, innerW)
+  emitter.emit('dragEvent', type, props.i, pos.x, pos.y, innerH, innerW)
 }
 
 function calcPosition(x: number, y: number, w: number, h: number) {
@@ -762,10 +735,12 @@ function compact() {
 
 function tryInteract() {
   if (!interactObj.value && wrapper.value) {
-    interactObj.value = interact(wrapper.value)
-    if (!state.useStyleCursor) {
-      interactObj.value.styleCursor(false)
-    }
+    // @ts-ignore
+    interactObj.value = new Moveable(document.body, {
+      target: wrapper.value,
+      hideDefaultLines: true,
+      origin: false
+    })
   }
 }
 
@@ -777,21 +752,22 @@ function tryMakeDraggable() {
   if (!interactObj.value) return
 
   if (state.draggable && !props.static) {
-    const opts = {
-      ignoreFrom: props.dragIgnoreFrom,
-      allowFrom: props.dragAllowFrom,
-      ...props.dragOption
-    }
-    interactObj.value.draggable(opts)
+    interactObj.value.setState({
+      draggable: true
+    })
 
     if (!dragEventSet) {
       dragEventSet = true
-      interactObj.value.on('dragstart dragmove dragend', event => {
-        event.type === 'dragmove' ? throttleDrag(event) : handleDrag(event)
-      })
+
+      interactObj.value
+        .on('dragStart', e => handleDrag(e, 'dragstart'))
+        .on('drag', e => throttleDrag(e, 'dragmove'))
+        .on('dragEnd', e => handleDrag(e, 'dragend'))
     }
   } else {
-    interactObj.value.draggable({ enabled: false })
+    interactObj.value.setState({
+      draggable: false
+    })
   }
 }
 
@@ -803,43 +779,20 @@ function tryMakeResizable() {
   if (!interactObj.value) return
 
   if (state.resizable && !props.static) {
-    const maximum = calcPosition(0, 0, props.maxW, props.maxH)
-    const minimum = calcPosition(0, 0, props.minW, props.minH)
-
-    const opts: Record<string, any> = {
-      edges: {
-        left: false,
-        right: `.${resizerClass.value[0]}`,
-        bottom: `.${resizerClass.value[0]}`,
-        top: false
-      },
-      ignoreFrom: props.resizeIgnoreFrom,
-      restrictSize: {
-        min: {
-          height: minimum.height * state.transformScale,
-          width: minimum.width * state.transformScale
-        },
-        max: {
-          height: maximum.height * state.transformScale,
-          width: maximum.width * state.transformScale
-        }
-      },
-      ...props.resizeOption
-    }
-
-    if (props.preserveAspectRatio) {
-      opts.modifiers = [interact.modifiers.aspectRatio({ ratio: 'preserve' })]
-    }
-
-    interactObj.value.resizable(opts)
+    interactObj.value.setState({
+      resizable: true
+    })
     if (!resizeEventSet) {
       resizeEventSet = true
-      interactObj.value.on('resizestart resizemove resizeend', event => {
-        event.type === 'resizemove' ? throttleResize(event) : handleResize(event)
-      })
+      interactObj.value
+        .on('resizeStart', e => handleResize(e, 'resizestart'))
+        .on('resize', e => throttleResize(e, 'resizemove'))
+        .on('resizeEnd', e => handleResize(e, 'resizeend'))
     }
   } else {
-    interactObj.value.resizable({ enabled: false })
+    interactObj.value.setState({
+      resizable: false
+    })
   }
 }
 </script>

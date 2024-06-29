@@ -68,11 +68,10 @@
   "dependencies": {
     "@vexip-ui/hooks": "^2.4.0",
     "@vexip-ui/utils": "^2.13.0",
-    "interactjs": "^1.10.26"
+    "moveable": "^0.53.0"
   },
   "devDependencies": {
     "@commitlint/cli": "^17.6.1",
-    "@interactjs/types": "^1.10.26",
     "@types/minimist": "^1.2.2",
     "@types/node": "^18.15.12",
     "@types/prettier": "^2.7.2",
