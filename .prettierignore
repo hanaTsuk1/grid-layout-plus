@@ -1,9 +1,0 @@
-dist
-es
-lib
-node_modules
-public
-.husky
-
-*.svg
-*.sh
